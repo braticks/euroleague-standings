@@ -36,11 +36,22 @@ class EuroLeagueApi:
         data = await self._async_get_json(f"{API_V2}/seasons/E{season}/clubs")
         return _extract_rows(data)
 
-    async def _async_get_json(self, url: str) -> Any:
+    async def async_get_games(self, season: int) -> list[dict[str, Any]]:
+        """Return season games used to calculate points for/against."""
+        data = await self._async_get_json(
+            f"{API_V2}/seasons/E{season}/games",
+            params={"limit": 1000},
+        )
+        return _extract_rows(data)
+
+    async def _async_get_json(
+        self, url: str, params: dict[str, Any] | None = None
+    ) -> Any:
         try:
             async with asyncio.timeout(20):
                 response = await self._session.get(
                     url,
+                    params=params,
                     headers={"Accept": "application/json"},
                 )
                 async with response:
