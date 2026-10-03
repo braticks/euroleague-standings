@@ -8,10 +8,11 @@ Custom Home Assistant integration that exposes the current EuroLeague standings 
 - Automatic current regular-season round detection
 - Standings from the EuroLeague public API
 - Team logos from EuroLeague club data
+- Points for, points against and points differential calculated from played regular-season games
 - One sensor: `sensor.euroleague_standings`
 - HACS compatible
 
-The sensor attributes contain the season, current round and a `teams` list with position, team code, name, logo, games played, wins and losses.
+The sensor attributes contain the season, current round and a `teams` list with position, team code, name, logo, games played, wins, losses, `points_for`, `points_against` and `points_diff`.
 
 ## Install with HACS
 
