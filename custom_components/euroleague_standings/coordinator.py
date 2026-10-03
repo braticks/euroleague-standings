@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import logging
 from typing import Any
@@ -40,18 +41,25 @@ class EuroLeagueStandingsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if round_number is None:
                 raise EuroLeagueApiError("Could not determine the current round")
 
-            standings = await self.api.async_get_standings(season, round_number)
-            clubs = await self.api.async_get_clubs(season)
+            standings, clubs, games = await asyncio.gather(
+                self.api.async_get_standings(season, round_number),
+                self.api.async_get_clubs(season),
+                self.api.async_get_games(season),
+            )
         except EuroLeagueApiError as err:
             raise UpdateFailed(str(err)) from err
 
         clubs_by_code = {
-            str(club.get("code", "")).upper(): club
+            str(club.get("code", "")).strip().upper(): club
             for club in clubs
             if club.get("code")
         }
+        points_by_code = _calculate_regular_season_points(games, round_number)
 
-        teams = [_normalise_team(row, clubs_by_code) for row in standings]
+        teams = [
+            _normalise_team(row, clubs_by_code, points_by_code)
+            for row in standings
+        ]
         teams = [team for team in teams if team["position"] is not None]
         teams.sort(key=lambda team: team["position"])
 
@@ -112,8 +120,68 @@ def _parse_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _calculate_regular_season_points(
+    games: list[dict[str, Any]], round_number: int
+) -> dict[str, dict[str, int]]:
+    """Calculate points for/against from played regular-season games."""
+    totals: dict[str, dict[str, int]] = {}
+
+    for game in games:
+        if not _as_bool(_first(game, "played", "Played")):
+            continue
+
+        phase_code = str(
+            _first(game, "phaseType.code", "phaseTypeCode", "phase.code") or ""
+        ).upper()
+        if phase_code and phase_code not in {"RS", "REG", "REGULAR SEASON"}:
+            continue
+
+        game_round = _as_int(_first(game, "round", "roundNumber", "Round"))
+        if game_round is not None and game_round > round_number:
+            continue
+
+        local_code = str(
+            _first(game, "local.club.code", "local.code", "localClub.code") or ""
+        ).strip().upper()
+        road_code = str(
+            _first(game, "road.club.code", "road.code", "roadClub.code") or ""
+        ).strip().upper()
+        local_score = _as_int(
+            _first(game, "local.standingsScore", "local.score", "localScore")
+        )
+        road_score = _as_int(
+            _first(game, "road.standingsScore", "road.score", "roadScore")
+        )
+
+        if not local_code or not road_code or local_score is None or road_score is None:
+            continue
+
+        local = totals.setdefault(
+            local_code,
+            {"points_for": 0, "points_against": 0, "games": 0},
+        )
+        road = totals.setdefault(
+            road_code,
+            {"points_for": 0, "points_against": 0, "games": 0},
+        )
+
+        local["points_for"] += local_score
+        local["points_against"] += road_score
+        local["games"] += 1
+        road["points_for"] += road_score
+        road["points_against"] += local_score
+        road["games"] += 1
+
+    for values in totals.values():
+        values["points_diff"] = values["points_for"] - values["points_against"]
+
+    return totals
+
+
 def _normalise_team(
-    row: dict[str, Any], clubs_by_code: dict[str, dict[str, Any]]
+    row: dict[str, Any],
+    clubs_by_code: dict[str, dict[str, Any]],
+    points_by_code: dict[str, dict[str, int]],
 ) -> dict[str, Any]:
     code = str(
         _first(
@@ -126,9 +194,10 @@ def _normalise_team(
             "code",
         )
         or ""
-    ).upper()
+    ).strip().upper()
 
     club = clubs_by_code.get(code, {})
+    points = points_by_code.get(code, {})
 
     row_images = _first(row, "club.images")
     if not isinstance(row_images, dict):
@@ -151,6 +220,8 @@ def _normalise_team(
     )
 
     logo = row_images.get("crest") or club_images.get("crest")
+    points_for = _as_int(points.get("points_for")) or 0
+    points_against = _as_int(points.get("points_against")) or 0
 
     return {
         "position": _as_int(_first(row, "position", "Position")),
@@ -160,6 +231,9 @@ def _normalise_team(
         "games_played": _as_int(_first(row, "gamesPlayed", "GamesPlayed", "played")) or 0,
         "wins": _as_int(_first(row, "gamesWon", "GamesWon", "wins", "won")) or 0,
         "losses": _as_int(_first(row, "gamesLost", "GamesLost", "losses", "lost")) or 0,
+        "points_for": points_for,
+        "points_against": points_against,
+        "points_diff": points_for - points_against,
     }
 
 
@@ -189,3 +263,13 @@ def _as_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "played", "confirmed"}
+    return False
