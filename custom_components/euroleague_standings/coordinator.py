@@ -115,27 +115,73 @@ def _parse_datetime(value: Any) -> datetime | None:
 def _normalise_team(
     row: dict[str, Any], clubs_by_code: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
-    code = str(_first(row, "club.code", "clubCode", "code") or "").upper()
-    club = clubs_by_code.get(code, {})
-    images = club.get("images") if isinstance(club.get("images"), dict) else {}
+    code = str(
+        _first(
+            row,
+            "club.code",
+            "clubCode",
+            "ClubCode",
+            "teamCode",
+            "TeamCode",
+            "code",
+        )
+        or ""
+    ).upper()
 
-    name = _first(row, "club.name", "clubName", "name") or club.get("name") or code
+    club = clubs_by_code.get(code, {})
+
+    row_images = _first(row, "club.images")
+    if not isinstance(row_images, dict):
+        row_images = {}
+
+    club_images = club.get("images") if isinstance(club.get("images"), dict) else {}
+
+    name = (
+        _first(
+            row,
+            "club.name",
+            "clubName",
+            "ClubName",
+            "teamName",
+            "TeamName",
+            "name",
+        )
+        or club.get("name")
+        or code
+    )
+
+    logo = row_images.get("crest") or club_images.get("crest")
+
     return {
         "position": _as_int(_first(row, "position", "Position")),
         "code": code,
         "name": str(name),
-        "logo": images.get("crest") if isinstance(images, dict) else None,
-        "games_played": _as_int(_first(row, "gamesPlayed", "played")) or 0,
-        "wins": _as_int(_first(row, "gamesWon", "wins", "won")) or 0,
-        "losses": _as_int(_first(row, "gamesLost", "losses", "lost")) or 0,
+        "logo": logo,
+        "games_played": _as_int(_first(row, "gamesPlayed", "GamesPlayed", "played")) or 0,
+        "wins": _as_int(_first(row, "gamesWon", "GamesWon", "wins", "won")) or 0,
+        "losses": _as_int(_first(row, "gamesLost", "GamesLost", "losses", "lost")) or 0,
     }
 
 
 def _first(row: dict[str, Any], *keys: str) -> Any:
     for key in keys:
-        if key in row and row[key] is not None:
-            return row[key]
+        value = _get_value(row, key)
+        if value is not None:
+            return value
     return None
+
+
+def _get_value(row: dict[str, Any], key: str) -> Any:
+    """Read either a literal key or a dotted path from an API row."""
+    if key in row:
+        return row[key]
+
+    current: Any = row
+    for part in key.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
 
 
 def _as_int(value: Any) -> int | None:
