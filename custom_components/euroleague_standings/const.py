@@ -4,6 +4,7 @@ from datetime import timedelta
 
 DOMAIN = "euroleague_standings"
 NAME = "EuroLeague Standings"
+FRONTEND_VERSION = "1.2.0"
 
 API_V2 = "https://api-live.euroleague.net/v2/competitions/E"
 API_V3 = "https://api-live.euroleague.net/v3/competitions/E"
