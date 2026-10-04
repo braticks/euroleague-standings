@@ -16,6 +16,7 @@ One HACS integration for EuroLeague standings **and** the Lovelace card.
 - Automatic Lovelace resource registration in storage mode
 - Visual card editor in English
 - Configurable TOP N, favorite team, Playoff / Play-In zones, team-logo mode, header mode, GP and +/- columns
+- Three card density modes: **Normal**, **Compact** and **Super compact**
 - HACS compatible
 
 ## Installation with HACS
@@ -49,9 +50,13 @@ show_round: true
 show_gp: false
 show_diff: true
 show_zones: true
-compact: false
+density: super_compact
 highlight_favorite: true
 ```
+
+`density` accepts `normal`, `compact` or `super_compact`. Super compact mode uses smaller rows, logos and text, and hides the GP column, zone divider labels and legend to minimize card height.
+
+Legacy configurations using `compact: true` are automatically treated as `density: compact`.
 
 ## Lovelace YAML resource mode
 
