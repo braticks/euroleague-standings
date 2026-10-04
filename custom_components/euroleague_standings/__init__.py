@@ -6,12 +6,15 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .coordinator import EuroLeagueStandingsCoordinator
+from .frontend import async_setup_frontend
 
 PLATFORMS = [Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up EuroLeague Standings from a config entry."""
+    await async_setup_frontend(hass)
+
     coordinator = EuroLeagueStandingsCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
 
