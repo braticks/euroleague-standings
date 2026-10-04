@@ -1,8 +1,8 @@
 # EuroLeague Standings for Home Assistant
 
-One HACS integration for EuroLeague standings **and** the Lovelace card.
+[![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=braticks&repository=euroleague-standings&category=integration)
 
-[![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=braticks&repository=euroleague-standings&category=integration)
+One HACS integration for EuroLeague standings **and** the Lovelace card.
 
 ## Features
 
@@ -20,26 +20,20 @@ One HACS integration for EuroLeague standings **and** the Lovelace card.
 
 ## Installation with HACS
 
-Click the button below to open this repository directly in HACS:
+Use the **Open in HACS** button above for one-click setup.
 
-[![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=braticks&repository=euroleague-standings&category=integration)
+Manual fallback:
 
-Then:
-
-1. Download **EuroLeague Standings** in HACS.
-2. Restart Home Assistant.
-3. Go to **Settings → Devices & services → Add integration** and add **EuroLeague Standings**.
-4. Add **EuroLeague Standings Card** from the dashboard card picker.
+1. HACS → Integrations → three dots → Custom repositories.
+2. Add `https://github.com/braticks/euroleague-standings` as **Integration**.
+3. Install **EuroLeague Standings**.
+4. Restart Home Assistant.
+5. Settings → Devices & services → Add integration → **EuroLeague Standings**.
+6. Add **EuroLeague Standings Card** from the dashboard card picker.
 
 No separate HACS Dashboard repository is required from version 1.2.0 onward.
 
 If the old `euroleague-standings-card` Dashboard repository was previously installed, update this integration first, restart Home Assistant, verify the card works, then the separate Dashboard repository can be removed from HACS.
-
-### Manual HACS repository fallback
-
-If the one-click button does not work, add this repository manually in HACS as an **Integration**:
-
-`https://github.com/braticks/euroleague-standings`
 
 ### Manual YAML example
 
