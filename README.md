@@ -4,6 +4,10 @@
 
 One HACS integration for EuroLeague standings **and** the Lovelace card.
 
+## Preview
+
+![EuroLeague Standings Card preview](./.github/assets/euroleague-standings-card-preview.png)
+
 ## Features
 
 - Automatic current EuroLeague season detection
