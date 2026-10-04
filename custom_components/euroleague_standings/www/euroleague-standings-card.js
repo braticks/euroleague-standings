@@ -1,4 +1,4 @@
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.3.0";
 const EUROLEAGUE_LOGO_URL = "https://upload.wikimedia.org/wikipedia/commons/9/90/EuroLeague_logo.svg";
 
 const DEFAULT_CONFIG = {
@@ -15,7 +15,7 @@ const DEFAULT_CONFIG = {
   show_round: true,
   show_gp: false,
   show_diff: true,
-  compact: false,
+  density: "normal",
   highlight_favorite: true,
 };
 
@@ -42,6 +42,12 @@ const zoneFor = (position) => {
   return "outside";
 };
 
+const densityForConfig = (config) => {
+  const density = String(config?.density || "").toLowerCase();
+  if (["normal", "compact", "super_compact"].includes(density)) return density;
+  return config?.compact === true ? "compact" : "normal";
+};
+
 class EuroleagueStandingsCard extends HTMLElement {
   constructor() {
     super();
@@ -62,6 +68,8 @@ class EuroleagueStandingsCard extends HTMLElement {
     if (!config.team_logo_mode && Object.prototype.hasOwnProperty.call(config, "show_logos")) {
       merged.team_logo_mode = config.show_logos === false ? "none" : "icon";
     }
+    merged.density = densityForConfig(config);
+    delete merged.compact;
     this._config = merged;
     this._render();
   }
@@ -73,6 +81,8 @@ class EuroleagueStandingsCard extends HTMLElement {
 
   getCardSize() {
     const count = Math.max(1, Math.min(20, asInt(this._config?.count, 10)));
+    const density = this._density();
+    if (density === "super_compact") return Math.max(2, Math.ceil((count + 2) / 3));
     return Math.max(3, Math.ceil((count + 2) / 2));
   }
 
@@ -101,6 +111,14 @@ class EuroleagueStandingsCard extends HTMLElement {
     return ["icon", "background", "none"].includes(mode) ? mode : "icon";
   }
 
+  _density() {
+    return densityForConfig(this._config);
+  }
+
+  _showGp() {
+    return this._config?.show_gp === true && this._density() !== "super_compact";
+  }
+
   _visibleTeams(allTeams) {
     const count = Math.max(1, Math.min(20, asInt(this._config.count, 10)));
     const top = allTeams.slice(0, count);
@@ -115,10 +133,11 @@ class EuroleagueStandingsCard extends HTMLElement {
   _row(team, appended = false) {
     const cfg = this._config;
     const logoMode = this._logoMode();
+    const density = this._density();
+    const showGp = this._showGp();
     const isFavorite = String(cfg.favorite_team ?? "").toUpperCase() === team.code;
     const zone = cfg.show_zones === false ? "none" : zoneFor(team.position);
-    const classes = ["team-row", `zone-${zone}`];
-    if (cfg.compact) classes.push("compact");
+    const classes = ["team-row", `zone-${zone}`, `density-${density.replaceAll("_", "-")}`];
     if (isFavorite && cfg.highlight_favorite !== false) classes.push("favorite");
     if (appended) classes.push("appended");
 
@@ -142,7 +161,7 @@ class EuroleagueStandingsCard extends HTMLElement {
           <span>${escapeHtml(team.name)}</span>
           ${isFavorite && cfg.highlight_favorite !== false ? '<span class="favorite-star" title="Favorite team">★</span>' : ""}
         </div>
-        ${cfg.show_gp === true ? `<div class="stat gp">${team.games_played}</div>` : ""}
+        ${showGp ? `<div class="stat gp">${team.games_played}</div>` : ""}
         <div class="stat wins">${team.wins}</div>
         <div class="stat losses">${team.losses}</div>
         ${cfg.show_diff !== false ? `<div class="stat diff" title="PF ${team.points_for} / PA ${team.points_against}">${signed(team.points_diff)}</div>` : ""}
@@ -151,11 +170,12 @@ class EuroleagueStandingsCard extends HTMLElement {
 
   _rows(teams) {
     let html = "";
+    const showDividerLabels = this._density() !== "super_compact";
     for (const team of teams) {
-      if (this._config.show_zones !== false && team.position === 7) {
+      if (showDividerLabels && this._config.show_zones !== false && team.position === 7) {
         html += '<div class="zone-divider playin-label"><span>PLAY-IN</span></div>';
       }
-      if (this._config.show_zones !== false && team.position === 11) {
+      if (showDividerLabels && this._config.show_zones !== false && team.position === 11) {
         html += '<div class="zone-divider outside-label"><span>OUTSIDE PLAY-IN</span></div>';
       }
       html += this._row(team);
@@ -203,31 +223,41 @@ class EuroleagueStandingsCard extends HTMLElement {
 
     const { top, favorite } = this._visibleTeams(allTeams);
     const logoMode = this._logoMode();
-    const diffColumn = this._config.show_diff !== false ? "46px " : "";
-    const gpColumn = this._config.show_gp === true ? "34px " : "";
+    const density = this._density();
+    const showGp = this._showGp();
+    const isSuperCompact = density === "super_compact";
+    const rankColumn = isSuperCompact ? "26px" : "34px";
+    const logoColumn = isSuperCompact ? "24px" : "38px";
+    const statColumn = isSuperCompact ? "27px" : "34px";
+    const diffColumn = this._config.show_diff !== false ? `${isSuperCompact ? "38px" : "46px"} ` : "";
+    const gpColumn = showGp ? `${isSuperCompact ? "28px" : "34px"} ` : "";
     const gridColumns = logoMode === "icon"
-      ? `34px 38px minmax(0,1fr) ${gpColumn}34px 34px ${diffColumn}`
-      : `34px minmax(0,1fr) ${gpColumn}34px 34px ${diffColumn}`;
+      ? `${rankColumn} ${logoColumn} minmax(0,1fr) ${gpColumn}${statColumn} ${statColumn} ${diffColumn}`
+      : `${rankColumn} minmax(0,1fr) ${gpColumn}${statColumn} ${statColumn} ${diffColumn}`;
 
     const favoriteBlock = favorite
-      ? `<div class="favorite-divider"><span>FAVORITE TEAM</span></div>${this._row(favorite, true)}`
+      ? `${isSuperCompact ? '<div class="favorite-gap"></div>' : '<div class="favorite-divider"><span>FAVORITE TEAM</span></div>'}${this._row(favorite, true)}`
+      : "";
+
+    const legend = this._config.show_zones !== false && !isSuperCompact
+      ? '<div class="legend"><span><i class="dot playoff"></i>1–6 Playoff</span><span><i class="dot playin"></i>7–10 Play-In</span></div>'
       : "";
 
     this.shadowRoot.innerHTML = `
       <style>${EuroleagueStandingsCard.styles}</style>
-      <ha-card style="--el-grid:${gridColumns}">
+      <ha-card class="density-${density.replaceAll("_", "-")}" style="--el-grid:${gridColumns}">
         ${this._header(stateObj.attributes?.season, stateObj.attributes?.round, stateObj.attributes?.round_name)}
         <div class="table-head">
           <div>#</div>
           ${logoMode === "icon" ? "<div></div>" : ""}
           <div>TEAM</div>
-          ${this._config.show_gp === true ? '<div class="center">GP</div>' : ""}
+          ${showGp ? '<div class="center">GP</div>' : ""}
           <div class="center">W</div>
           <div class="center">L</div>
           ${this._config.show_diff !== false ? '<div class="center">+/-</div>' : ""}
         </div>
         <div class="rows">${this._rows(top)}${favoriteBlock}</div>
-        ${this._config.show_zones !== false ? '<div class="legend"><span><i class="dot playoff"></i>1–6 Playoff</span><span><i class="dot playin"></i>7–10 Play-In</span></div>' : ""}
+        ${legend}
       </ha-card>`;
   }
 
@@ -242,7 +272,7 @@ class EuroleagueStandingsCard extends HTMLElement {
       .title{min-width:0;font-size:18px;line-height:1.15;font-weight:800;letter-spacing:.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .head-right{margin-left:auto;display:flex;align-items:center}.round{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--secondary-text-color,#bbb);white-space:nowrap}
       .table-head,.team-row{display:grid;grid-template-columns:var(--el-grid);align-items:center;column-gap:6px}.table-head{min-height:34px;padding:0 12px;font-size:10px;font-weight:800;letter-spacing:.08em;color:var(--secondary-text-color,#aaa);background:rgba(0,0,0,.08)}
-      .team-row{position:relative;isolation:isolate;overflow:hidden;min-height:48px;margin:0 8px 4px;padding:0 8px 0 5px;border-radius:8px;background:rgba(127,127,127,.08);border-left:4px solid transparent;box-sizing:border-box}.team-row.compact{min-height:40px;margin-bottom:3px}
+      .team-row{position:relative;isolation:isolate;overflow:hidden;min-height:48px;margin:0 8px 4px;padding:0 8px 0 5px;border-radius:8px;background:rgba(127,127,127,.08);border-left:4px solid transparent;box-sizing:border-box}
       .team-row.zone-playoff{border-left-color:#24a148;background:linear-gradient(90deg,rgba(36,161,72,.12),rgba(127,127,127,.06) 34%)}.team-row.zone-playin{border-left-color:#ff8a00;background:linear-gradient(90deg,rgba(255,138,0,.12),rgba(127,127,127,.06) 34%)}.team-row.zone-outside{border-left-color:rgba(160,160,160,.4)}.team-row.zone-none{border-left-color:transparent}
       .team-row.favorite{outline:1px solid rgba(36,161,72,.58);box-shadow:inset 0 0 0 1px rgba(36,161,72,.10)}.team-row.appended{margin-bottom:8px}
       .row-bg-logo{position:absolute;z-index:-1;right:8px;top:50%;transform:translateY(-50%);width:96px;height:96px;object-fit:contain;opacity:.11;pointer-events:none}.rank,.logo-wrap,.team-name,.stat{position:relative;z-index:1}
@@ -250,8 +280,14 @@ class EuroleagueStandingsCard extends HTMLElement {
       .team-name{min-width:0;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700}.team-name>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.favorite-star{flex:0 0 auto;font-size:12px;color:#32c766}
       .stat{text-align:center;font-size:13px;font-variant-numeric:tabular-nums}.wins{font-weight:800}.losses,.gp{color:var(--secondary-text-color,#bbb)}.diff{font-weight:800;font-size:12px}.center{text-align:center}.rows{padding:6px 0 2px}
       .zone-divider,.favorite-divider{display:flex;align-items:center;gap:8px;margin:7px 12px 6px;font-size:9px;font-weight:800;letter-spacing:.12em;color:var(--secondary-text-color,#999)}.zone-divider:before,.zone-divider:after,.favorite-divider:before,.favorite-divider:after{content:"";height:1px;flex:1;background:var(--divider-color,rgba(255,255,255,.12))}.playin-label span{color:#ff9b28}.favorite-divider span{color:#32c766;white-space:nowrap}
+      .favorite-gap{height:3px}
       .legend{display:flex;flex-wrap:wrap;gap:14px;padding:7px 14px 12px;font-size:9px;color:var(--secondary-text-color,#999)}.legend span{display:flex;align-items:center;gap:5px}.dot{width:7px;height:7px;border-radius:50%;display:inline-block}.dot.playoff{background:#24a148}.dot.playin{background:#ff8a00}.empty{padding:20px;color:var(--secondary-text-color,#999);text-align:center}
-      @media(max-width:360px){.card-head{padding-left:12px;padding-right:12px}.title{font-size:16px}.team-row{margin-left:6px;margin-right:6px}.team-name{font-size:12px}.legend{gap:9px}.header-logo{width:min(132px,40vw)}.logo-only .header-logo{width:min(176px,58vw)}.row-bg-logo{width:78px;height:78px}}
+
+      .density-compact .card-head{padding:10px 14px 8px;gap:12px}.density-compact .header-main.logo-only{min-height:36px}.density-compact .header-logo{width:min(140px,40vw);max-height:34px}.density-compact .logo-only .header-logo{width:min(180px,56vw);max-height:42px}.density-compact .title{font-size:16px}.density-compact .table-head{min-height:30px;padding:0 10px}.density-compact .team-row{min-height:40px;margin-bottom:3px}.density-compact .rows{padding-top:4px}.density-compact .row-bg-logo{width:80px;height:80px}.density-compact .legend{padding-top:5px;padding-bottom:9px}
+
+      .density-super-compact .card-head{padding:6px 10px 5px;gap:8px}.density-super-compact .header-main{gap:6px}.density-super-compact .header-main.logo-only{min-height:0}.density-super-compact .header-logo-shell{border-radius:5px;padding:3px 6px}.density-super-compact .header-logo{width:min(104px,32vw);max-height:24px}.density-super-compact .logo-only .header-logo{width:min(124px,38vw);max-height:28px}.density-super-compact .title{font-size:14px;line-height:1.05}.density-super-compact .round{font-size:9px;letter-spacing:.04em}.density-super-compact .table-head{min-height:24px;padding:0 7px;font-size:8px;letter-spacing:.05em;column-gap:3px}.density-super-compact .team-row{min-height:28px;margin:0 5px 2px;padding:0 4px 0 3px;border-left-width:3px;border-radius:5px;column-gap:3px}.density-super-compact .team-row.appended{margin-bottom:4px}.density-super-compact .rank{font-size:10px}.density-super-compact .logo-wrap{width:22px;height:22px}.density-super-compact .logo{max-width:19px;max-height:19px}.density-super-compact .logo-fallback{width:19px;height:19px;font-size:6px}.density-super-compact .team-name{gap:3px;font-size:10px;font-weight:700}.density-super-compact .favorite-star{font-size:8px}.density-super-compact .stat{font-size:10px}.density-super-compact .diff{font-size:9px}.density-super-compact .row-bg-logo{right:5px;width:50px;height:50px;opacity:.09}.density-super-compact .rows{padding:3px 0 1px}.density-super-compact .zone-divider,.density-super-compact .favorite-divider,.density-super-compact .legend{display:none}
+
+      @media(max-width:360px){.card-head{padding-left:12px;padding-right:12px}.title{font-size:16px}.team-row{margin-left:6px;margin-right:6px}.team-name{font-size:12px}.legend{gap:9px}.header-logo{width:min(132px,40vw)}.logo-only .header-logo{width:min(176px,58vw)}.row-bg-logo{width:78px;height:78px}.density-super-compact .card-head{padding-left:8px;padding-right:8px}.density-super-compact .title{font-size:13px}.density-super-compact .team-row{margin-left:4px;margin-right:4px}.density-super-compact .team-name{font-size:9px}.density-super-compact .header-logo{width:min(94px,31vw)}.density-super-compact .logo-only .header-logo{width:min(116px,37vw)}.density-super-compact .row-bg-logo{width:46px;height:46px}}
     `;
   }
 }
@@ -271,6 +307,8 @@ class EuroleagueStandingsCardEditor extends HTMLElement {
     if (!config?.team_logo_mode && Object.prototype.hasOwnProperty.call(config || {}, "show_logos")) {
       merged.team_logo_mode = config.show_logos === false ? "none" : "icon";
     }
+    merged.density = densityForConfig(config);
+    delete merged.compact;
     this._config = merged;
     this._rendered = false;
     this._render();
@@ -303,7 +341,7 @@ class EuroleagueStandingsCardEditor extends HTMLElement {
     const allowed = new Set([
       "entity", "title", "count", "favorite_team", "always_show_favorite",
       "show_zones", "team_logo_mode", "header_style", "header_text_mode", "header_text",
-      "show_round", "show_gp", "show_diff", "compact", "highlight_favorite",
+      "show_round", "show_gp", "show_diff", "density", "highlight_favorite",
     ]);
     if (!allowed.has(key)) return;
 
@@ -314,7 +352,7 @@ class EuroleagueStandingsCardEditor extends HTMLElement {
       detail: { config: { ...this._config } }, bubbles: true, composed: true,
     }));
 
-    if (["entity", "header_style", "header_text_mode"].includes(key)) {
+    if (["entity", "header_style", "header_text_mode", "density"].includes(key)) {
       this._rendered = false;
       this._render();
     }
@@ -338,10 +376,11 @@ class EuroleagueStandingsCardEditor extends HTMLElement {
       ...teams.map((team) => `<option value="${escapeHtml(team.code)}" ${team.code === String(cfg.favorite_team || "").toUpperCase() ? "selected" : ""}>${team.position}. ${escapeHtml(team.name)}</option>`),
     ].join("");
     const headerHasText = ["text", "both"].includes(cfg.header_style || "text");
+    const isSuperCompact = (cfg.density || "normal") === "super_compact";
 
     this.shadowRoot.innerHTML = `
       <style>
-        :host{display:block;color:var(--primary-text-color);font-family:var(--primary-font-family,Arial,sans-serif)}.form{display:grid;gap:16px;padding:8px 0}label.field{display:grid;gap:6px;font-size:14px}input:not([type=checkbox]),select{box-sizing:border-box;width:100%;padding:10px;font:inherit;color:var(--primary-text-color);background:var(--card-background-color,white);border:1px solid var(--divider-color,#888);border-radius:6px}.section{display:grid;gap:10px;padding:12px;border:1px solid var(--divider-color,#888);border-radius:8px}.section-title{font-size:12px;font-weight:800;letter-spacing:.05em;color:var(--secondary-text-color)}.check{display:flex;align-items:center;gap:9px;font-size:14px}input[type=checkbox]{width:18px;height:18px;accent-color:var(--primary-color,#00642f)}small{color:var(--secondary-text-color);line-height:1.4}
+        :host{display:block;color:var(--primary-text-color);font-family:var(--primary-font-family,Arial,sans-serif)}.form{display:grid;gap:16px;padding:8px 0}label.field{display:grid;gap:6px;font-size:14px}input:not([type=checkbox]),select{box-sizing:border-box;width:100%;padding:10px;font:inherit;color:var(--primary-text-color);background:var(--card-background-color,white);border:1px solid var(--divider-color,#888);border-radius:6px}.section{display:grid;gap:10px;padding:12px;border:1px solid var(--divider-color,#888);border-radius:8px}.section-title{font-size:12px;font-weight:800;letter-spacing:.05em;color:var(--secondary-text-color)}.check{display:flex;align-items:center;gap:9px;font-size:14px}input[type=checkbox]{width:18px;height:18px;accent-color:var(--primary-color,#00642f)}small{color:var(--secondary-text-color);line-height:1.4}.note{font-size:12px;color:var(--secondary-text-color);line-height:1.35}
       </style>
       <div class="form">
         <label class="field">Entity<input data-key="entity" list="el-sensors" value="${escapeHtml(cfg.entity || "")}" placeholder="sensor.euroleague_standings"></label>
@@ -358,7 +397,14 @@ class EuroleagueStandingsCardEditor extends HTMLElement {
         </div>
         <div class="section"><div class="section-title">TEAM LOGOS</div>${this._select("team_logo_mode", "Team logo style", [["icon","Next to team name"],["background","As row background"],["none","Hidden"]], cfg.team_logo_mode || "icon")}</div>
         <div class="section"><div class="section-title">FAVORITE TEAM</div>${this._checkbox("always_show_favorite", "Always show favorite team when it is outside TOP N", cfg.always_show_favorite !== false)}${this._checkbox("highlight_favorite", "Highlight favorite team", cfg.highlight_favorite !== false)}</div>
-        <div class="section"><div class="section-title">APPEARANCE</div>${this._checkbox("show_zones", "Show Playoff / Play-In zones", cfg.show_zones !== false)}${this._checkbox("show_gp", "Show GP column", cfg.show_gp === true)}${this._checkbox("show_diff", "Show +/- point differential", cfg.show_diff !== false)}${this._checkbox("compact", "Compact mode", cfg.compact === true)}</div>
+        <div class="section">
+          <div class="section-title">APPEARANCE</div>
+          ${this._select("density", "Card density", [["normal","Normal"],["compact","Compact"],["super_compact","Super compact"]], cfg.density || "normal")}
+          ${this._checkbox("show_zones", "Show Playoff / Play-In zones", cfg.show_zones !== false)}
+          ${this._checkbox("show_gp", "Show GP column", cfg.show_gp === true)}
+          ${this._checkbox("show_diff", "Show +/- point differential", cfg.show_diff !== false)}
+          ${isSuperCompact ? '<div class="note">Super compact mode hides the GP column, zone divider labels and legend to minimize card height.</div>' : ""}
+        </div>
         <small>The card is bundled with the EuroLeague Standings integration.</small>
       </div>`;
     this._rendered = true;
