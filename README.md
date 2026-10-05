@@ -12,6 +12,7 @@ One HACS integration for EuroLeague standings **and** the Lovelace card.
 
 - Automatic current EuroLeague season detection
 - Automatic current regular-season round detection
+- Automatic fallback to the latest published standings round when the newest scheduled round is not available yet
 - Standings from the EuroLeague public API
 - Team logos from EuroLeague club data
 - Points for, points against and point differential calculated from played regular-season games
@@ -70,10 +71,14 @@ Legacy configurations using `compact: true` are automatically treated as `densit
 
 The integration stores the latest usable standings in Home Assistant storage.
 
+If the EuroLeague API already lists a new regular-season round but its standings endpoint still returns HTTP 404, the integration automatically tries earlier rounds and uses the newest round with published standings. For example, if Round 4 is scheduled but its standings are not published yet, Round 3 remains available until Round 4 appears.
+
 If the EuroLeague API is temporarily unavailable, the previous standings remain available instead of the sensor immediately becoming `unavailable`. This also works after a Home Assistant restart once at least one successful update has been cached.
 
 Useful sensor attributes:
 
+- `scheduled_round` — the newest regular-season round selected from the EuroLeague rounds feed.
+- `round_fallback: true` — an earlier published standings round is currently being used because the newest scheduled round is not available yet.
 - `data_stale: true` — the integration is currently showing cached standings because the required API data could not be refreshed.
 - `partial_data: true` — the main standings are fresh, but supplemental clubs or games data failed to refresh.
 - `partial_errors` — shows which supplemental request failed.
