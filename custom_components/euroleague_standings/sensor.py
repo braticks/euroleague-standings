@@ -44,11 +44,21 @@ class EuroLeagueStandingsSensor(
         )
 
     @property
+    def available(self) -> bool:
+        """Keep the last successful standings available during temporary API failures."""
+        return bool(self.coordinator.data)
+
+    @property
     def native_value(self) -> int | None:
         """Use current round as the sensor state."""
-        return self.coordinator.data.get("round")
+        return self.coordinator.data.get("round") if self.coordinator.data else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return standings for use by Lovelace cards."""
-        return dict(self.coordinator.data)
+        if not self.coordinator.data:
+            return {}
+
+        attributes = dict(self.coordinator.data)
+        attributes["data_stale"] = not self.coordinator.last_update_success
+        return attributes
