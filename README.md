@@ -15,6 +15,10 @@ One HACS integration for EuroLeague standings **and** the Lovelace card.
 - Standings from the EuroLeague public API
 - Team logos from EuroLeague club data
 - Points for, points against and point differential calculated from played regular-season games
+- Persistent last-known standings cache that survives Home Assistant restarts
+- Cached standings remain visible during temporary EuroLeague API failures
+- Supplemental clubs / games API failures do not take the main standings offline
+- Endpoint-specific warning logs for easier API troubleshooting
 - Sensor: `sensor.euroleague_standings`
 - Bundled `custom:euroleague-standings-card`
 - Automatic Lovelace resource registration in storage mode
@@ -61,6 +65,19 @@ highlight_favorite: true
 `density` accepts `normal`, `compact` or `super_compact`. Super compact mode uses smaller rows, logos and text, and hides the GP column, zone divider labels and legend to minimize card height.
 
 Legacy configurations using `compact: true` are automatically treated as `density: compact`.
+
+## Reliability and cached data
+
+The integration stores the latest usable standings in Home Assistant storage.
+
+If the EuroLeague API is temporarily unavailable, the previous standings remain available instead of the sensor immediately becoming `unavailable`. This also works after a Home Assistant restart once at least one successful update has been cached.
+
+Useful sensor attributes:
+
+- `data_stale: true` — the integration is currently showing cached standings because the required API data could not be refreshed.
+- `partial_data: true` — the main standings are fresh, but supplemental clubs or games data failed to refresh.
+- `partial_errors` — shows which supplemental request failed.
+- `last_error` — contains the most recent full-update error while cached standings are being used.
 
 ## Lovelace YAML resource mode
 
