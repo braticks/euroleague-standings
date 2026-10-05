@@ -64,28 +64,26 @@ class EuroLeagueStandingsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         try:
             rounds = await self.api.async_get_rounds(season)
-            round_info = _select_regular_season_round(rounds)
-            round_number = _as_int(round_info.get("round"))
-            if round_number is None:
+            round_candidates = _regular_season_round_candidates(rounds)
+            scheduled_round = _as_int(round_candidates[0].get("round"))
+            if scheduled_round is None:
                 raise EuroLeagueApiError("Could not determine the current round")
+
+            standings_result, round_info, round_number = (
+                await self._async_get_latest_published_standings(
+                    season,
+                    round_candidates,
+                )
+            )
         except EuroLeagueApiError as err:
             return self._cached_or_raise(err)
 
         results = await asyncio.gather(
-            self.api.async_get_standings(season, round_number),
             self.api.async_get_clubs(season),
             self.api.async_get_games(season),
             return_exceptions=True,
         )
-        standings_result, clubs_result, games_result = results
-
-        if isinstance(standings_result, Exception):
-            err = (
-                standings_result
-                if isinstance(standings_result, EuroLeagueApiError)
-                else EuroLeagueApiError(str(standings_result))
-            )
-            return self._cached_or_raise(err)
+        clubs_result, games_result = results
 
         optional_errors: list[str] = []
 
@@ -142,6 +140,8 @@ class EuroLeagueStandingsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "season_code": f"E{season}",
             "round": round_number,
             "round_name": round_info.get("name") or f"Round {round_number}",
+            "scheduled_round": scheduled_round,
+            "round_fallback": round_number != scheduled_round,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "team_count": len(teams),
             "teams": teams,
@@ -153,6 +153,56 @@ class EuroLeagueStandingsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         await self._async_save_cache(data)
         return data
+
+    async def _async_get_latest_published_standings(
+        self,
+        season: int,
+        round_candidates: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], int]:
+        """Return standings for the newest round that has published standings."""
+        unavailable_rounds: list[int] = []
+
+        for round_info in round_candidates:
+            round_number = _as_int(round_info.get("round"))
+            if round_number is None:
+                continue
+
+            try:
+                standings = await self.api.async_get_standings(season, round_number)
+            except EuroLeagueApiError as err:
+                if err.status != 404:
+                    raise
+
+                unavailable_rounds.append(round_number)
+                _LOGGER.info(
+                    "EuroLeague standings for round %s are not published yet; trying the previous round",
+                    round_number,
+                )
+                continue
+
+            if not standings:
+                unavailable_rounds.append(round_number)
+                _LOGGER.info(
+                    "EuroLeague standings for round %s are empty; trying the previous round",
+                    round_number,
+                )
+                continue
+
+            if unavailable_rounds:
+                _LOGGER.info(
+                    "Using EuroLeague round %s standings because newer round(s) %s are not published yet",
+                    round_number,
+                    ", ".join(str(value) for value in unavailable_rounds),
+                )
+
+            return standings, round_info, round_number
+
+        tried = ", ".join(str(value) for value in unavailable_rounds) or "none"
+        raise EuroLeagueApiError(
+            "EuroLeague standings are not published for any available regular-season "
+            f"round (tried: {tried})",
+            status=404,
+        )
 
     def _cached_or_raise(self, err: EuroLeagueApiError) -> dict[str, Any]:
         """Return cached standings on a full update failure, if available."""
@@ -215,6 +265,35 @@ def _select_regular_season_round(rounds: list[dict[str, Any]]) -> dict[str, Any]
         candidates,
         key=lambda item: _as_int(item.get("round")) or 9999,
     )
+
+
+def _regular_season_round_candidates(
+    rounds: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return the selected regular-season round followed by earlier rounds."""
+    regular = [
+        item
+        for item in rounds
+        if str(item.get("phaseTypeCode", "")).upper()
+        in {"RS", "REG", "REGULAR SEASON"}
+    ]
+    candidates = regular or rounds
+    selected = _select_regular_season_round(rounds)
+    selected_round = _as_int(selected.get("round"))
+    if selected_round is None:
+        raise EuroLeagueApiError("Could not determine the current round")
+
+    by_round: dict[int, dict[str, Any]] = {}
+    for item in candidates:
+        round_number = _as_int(item.get("round"))
+        if round_number is None or round_number > selected_round:
+            continue
+        by_round.setdefault(round_number, item)
+
+    if selected_round not in by_round:
+        by_round[selected_round] = selected
+
+    return [by_round[number] for number in sorted(by_round, reverse=True)]
 
 
 def _parse_datetime(value: Any) -> datetime | None:
