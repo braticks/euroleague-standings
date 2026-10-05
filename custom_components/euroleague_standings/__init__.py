@@ -16,6 +16,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await async_setup_frontend(hass)
 
     coordinator = EuroLeagueStandingsCoordinator(hass, entry)
+    await coordinator.async_load_cache()
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
