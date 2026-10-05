@@ -45,7 +45,7 @@ class EuroLeagueStandingsSensor(
 
     @property
     def available(self) -> bool:
-        """Keep the last successful standings available during temporary API failures."""
+        """Keep the last known standings available when cached data exists."""
         return bool(self.coordinator.data)
 
     @property
@@ -55,10 +55,13 @@ class EuroLeagueStandingsSensor(
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return standings for use by Lovelace cards."""
+        """Return standings and cache status for Lovelace cards."""
         if not self.coordinator.data:
             return {}
 
         attributes = dict(self.coordinator.data)
-        attributes["data_stale"] = not self.coordinator.last_update_success
+        attributes.setdefault(
+            "data_stale",
+            not self.coordinator.last_update_success,
+        )
         return attributes
