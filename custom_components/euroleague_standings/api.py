@@ -13,6 +13,17 @@ from .const import API_V2, API_V3
 class EuroLeagueApiError(Exception):
     """Raised when EuroLeague data cannot be loaded."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        url: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.url = url
+
 
 class EuroLeagueApi:
     """EuroLeague API client."""
@@ -59,14 +70,17 @@ class EuroLeagueApi:
                         body = (await response.text())[:200]
                         raise EuroLeagueApiError(
                             f"EuroLeague API request to {url} returned HTTP "
-                            f"{response.status}: {body}"
+                            f"{response.status}: {body}",
+                            status=response.status,
+                            url=url,
                         )
                     return await response.json(content_type=None)
         except EuroLeagueApiError:
             raise
         except (TimeoutError, ClientError, ValueError) as err:
             raise EuroLeagueApiError(
-                f"EuroLeague API request to {url} failed: {err}"
+                f"EuroLeague API request to {url} failed: {err}",
+                url=url,
             ) from err
 
 
