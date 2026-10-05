@@ -22,7 +22,7 @@ class EuroLeagueApi:
 
     async def async_get_rounds(self, season: int) -> list[dict[str, Any]]:
         data = await self._async_get_json(f"{API_V2}/seasons/E{season}/rounds")
-        return _extract_rows(data)
+        return _extract_rows(data, "rounds")
 
     async def async_get_standings(
         self, season: int, round_number: int
@@ -30,11 +30,11 @@ class EuroLeagueApi:
         data = await self._async_get_json(
             f"{API_V3}/seasons/E{season}/rounds/{round_number}/basicstandings"
         )
-        return _extract_rows(data)
+        return _extract_rows(data, "standings")
 
     async def async_get_clubs(self, season: int) -> list[dict[str, Any]]:
         data = await self._async_get_json(f"{API_V2}/seasons/E{season}/clubs")
-        return _extract_rows(data)
+        return _extract_rows(data, "clubs")
 
     async def async_get_games(self, season: int) -> list[dict[str, Any]]:
         """Return season games used to calculate points for/against."""
@@ -42,7 +42,7 @@ class EuroLeagueApi:
             f"{API_V2}/seasons/E{season}/games",
             params={"limit": 1000},
         )
-        return _extract_rows(data)
+        return _extract_rows(data, "games")
 
     async def _async_get_json(
         self, url: str, params: dict[str, Any] | None = None
@@ -58,23 +58,32 @@ class EuroLeagueApi:
                     if response.status >= 400:
                         body = (await response.text())[:200]
                         raise EuroLeagueApiError(
-                            f"EuroLeague API returned HTTP {response.status}: {body}"
+                            f"EuroLeague API request to {url} returned HTTP "
+                            f"{response.status}: {body}"
                         )
                     return await response.json(content_type=None)
-        except (TimeoutError, ClientError) as err:
-            raise EuroLeagueApiError(f"EuroLeague API request failed: {err}") from err
+        except EuroLeagueApiError:
+            raise
+        except (TimeoutError, ClientError, ValueError) as err:
+            raise EuroLeagueApiError(
+                f"EuroLeague API request to {url} failed: {err}"
+            ) from err
 
 
-def _extract_rows(data: Any) -> list[dict[str, Any]]:
+def _extract_rows(data: Any, source: str) -> list[dict[str, Any]]:
     if isinstance(data, list):
         return [row for row in data if isinstance(row, dict)]
 
     if not isinstance(data, dict):
-        raise EuroLeagueApiError("EuroLeague API returned an unexpected payload")
+        raise EuroLeagueApiError(
+            f"EuroLeague {source} response returned an unexpected payload"
+        )
 
     for key in ("data", "Data", "rows", "Rows", "teams"):
         rows = data.get(key)
         if isinstance(rows, list):
             return [row for row in rows if isinstance(row, dict)]
 
-    raise EuroLeagueApiError("EuroLeague API response did not contain a list")
+    raise EuroLeagueApiError(
+        f"EuroLeague {source} response did not contain a list"
+    )
