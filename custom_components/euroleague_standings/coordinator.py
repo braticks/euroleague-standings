@@ -10,12 +10,15 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import EuroLeagueApi, EuroLeagueApiError
-from .const import DEFAULT_UPDATE_INTERVAL, NAME
+from .const import DEFAULT_UPDATE_INTERVAL, DOMAIN, NAME
 
 _LOGGER = logging.getLogger(__name__)
+
+_CACHE_VERSION = 1
 
 
 class EuroLeagueStandingsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -24,11 +27,36 @@ class EuroLeagueStandingsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.entry = entry
         self.api = EuroLeagueApi(async_get_clientsession(hass))
+        self._store: Store[dict[str, Any]] = Store(
+            hass,
+            _CACHE_VERSION,
+            f"{DOMAIN}.{entry.entry_id}.standings_cache",
+        )
         super().__init__(
             hass,
             _LOGGER,
             name=NAME,
             update_interval=DEFAULT_UPDATE_INTERVAL,
+        )
+
+    async def async_load_cache(self) -> None:
+        """Load the last successful standings from Home Assistant storage."""
+        try:
+            cached = await self._store.async_load()
+        except Exception as err:  # Cache problems must never block the integration.
+            _LOGGER.warning("Could not load EuroLeague standings cache: %s", err)
+            return
+
+        if not isinstance(cached, dict) or not isinstance(cached.get("teams"), list):
+            return
+
+        self.data = dict(cached)
+        self.data["data_stale"] = True
+        self.data["data_source"] = "cache"
+        self.data.pop("last_error", None)
+        _LOGGER.info(
+            "Loaded cached EuroLeague standings from %s",
+            self.data.get("updated_at", "unknown time"),
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -40,14 +68,49 @@ class EuroLeagueStandingsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             round_number = _as_int(round_info.get("round"))
             if round_number is None:
                 raise EuroLeagueApiError("Could not determine the current round")
-
-            standings, clubs, games = await asyncio.gather(
-                self.api.async_get_standings(season, round_number),
-                self.api.async_get_clubs(season),
-                self.api.async_get_games(season),
-            )
         except EuroLeagueApiError as err:
-            raise UpdateFailed(str(err)) from err
+            return self._cached_or_raise(err)
+
+        results = await asyncio.gather(
+            self.api.async_get_standings(season, round_number),
+            self.api.async_get_clubs(season),
+            self.api.async_get_games(season),
+            return_exceptions=True,
+        )
+        standings_result, clubs_result, games_result = results
+
+        if isinstance(standings_result, Exception):
+            err = (
+                standings_result
+                if isinstance(standings_result, EuroLeagueApiError)
+                else EuroLeagueApiError(str(standings_result))
+            )
+            return self._cached_or_raise(err)
+
+        optional_errors: list[str] = []
+
+        if isinstance(clubs_result, Exception):
+            clubs: list[dict[str, Any]] = []
+            message = f"clubs: {clubs_result}"
+            optional_errors.append(message)
+            _LOGGER.warning(
+                "EuroLeague clubs update failed; keeping standings and reusing previous club data where possible: %s",
+                clubs_result,
+            )
+        else:
+            clubs = clubs_result
+
+        games_failed = isinstance(games_result, Exception)
+        if games_failed:
+            games: list[dict[str, Any]] = []
+            message = f"games: {games_result}"
+            optional_errors.append(message)
+            _LOGGER.warning(
+                "EuroLeague games update failed; keeping standings and reusing previous points data where possible: %s",
+                games_result,
+            )
+        else:
+            games = games_result
 
         clubs_by_code = {
             str(club.get("code", "")).strip().upper(): club
@@ -55,15 +118,26 @@ class EuroLeagueStandingsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if club.get("code")
         }
         points_by_code = _calculate_regular_season_points(games, round_number)
+        previous_by_code = {
+            str(team.get("code", "")).strip().upper(): team
+            for team in (self.data or {}).get("teams", [])
+            if isinstance(team, dict) and team.get("code")
+        }
 
         teams = [
-            _normalise_team(row, clubs_by_code, points_by_code)
-            for row in standings
+            _normalise_team(
+                row,
+                clubs_by_code,
+                points_by_code,
+                previous_by_code,
+                use_previous_points=games_failed,
+            )
+            for row in standings_result
         ]
         teams = [team for team in teams if team["position"] is not None]
         teams.sort(key=lambda team: team["position"])
 
-        return {
+        data: dict[str, Any] = {
             "season": season,
             "season_code": f"E{season}",
             "round": round_number,
@@ -71,7 +145,42 @@ class EuroLeagueStandingsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "team_count": len(teams),
             "teams": teams,
+            "data_stale": False,
+            "data_source": "live",
+            "partial_data": bool(optional_errors),
+            "partial_errors": optional_errors,
         }
+
+        await self._async_save_cache(data)
+        return data
+
+    def _cached_or_raise(self, err: EuroLeagueApiError) -> dict[str, Any]:
+        """Return cached standings on a full update failure, if available."""
+        if self.data and isinstance(self.data.get("teams"), list):
+            stale = dict(self.data)
+            stale["data_stale"] = True
+            stale["data_source"] = "cache"
+            stale["last_error"] = str(err)
+            _LOGGER.warning(
+                "EuroLeague standings update failed; using cached standings: %s",
+                err,
+            )
+            return stale
+
+        _LOGGER.warning(
+            "EuroLeague standings update failed and no cached standings are available: %s",
+            err,
+        )
+        raise UpdateFailed(str(err)) from err
+
+    async def _async_save_cache(self, data: dict[str, Any]) -> None:
+        """Persist the latest usable standings."""
+        cache_data = dict(data)
+        cache_data.pop("last_error", None)
+        try:
+            await self._store.async_save(cache_data)
+        except Exception as err:  # A cache write failure should not lose live data.
+            _LOGGER.warning("Could not save EuroLeague standings cache: %s", err)
 
 
 def _current_season() -> int:
@@ -182,6 +291,9 @@ def _normalise_team(
     row: dict[str, Any],
     clubs_by_code: dict[str, dict[str, Any]],
     points_by_code: dict[str, dict[str, int]],
+    previous_by_code: dict[str, dict[str, Any]],
+    *,
+    use_previous_points: bool,
 ) -> dict[str, Any]:
     code = str(
         _first(
@@ -198,6 +310,7 @@ def _normalise_team(
 
     club = clubs_by_code.get(code, {})
     points = points_by_code.get(code, {})
+    previous = previous_by_code.get(code, {})
 
     row_images = _first(row, "club.images")
     if not isinstance(row_images, dict):
@@ -216,12 +329,18 @@ def _normalise_team(
             "name",
         )
         or club.get("name")
+        or previous.get("name")
         or code
     )
 
-    logo = row_images.get("crest") or club_images.get("crest")
-    points_for = _as_int(points.get("points_for")) or 0
-    points_against = _as_int(points.get("points_against")) or 0
+    logo = row_images.get("crest") or club_images.get("crest") or previous.get("logo")
+
+    if use_previous_points and previous:
+        points_for = _as_int(previous.get("points_for")) or 0
+        points_against = _as_int(previous.get("points_against")) or 0
+    else:
+        points_for = _as_int(points.get("points_for")) or 0
+        points_against = _as_int(points.get("points_against")) or 0
 
     return {
         "position": _as_int(_first(row, "position", "Position")),
